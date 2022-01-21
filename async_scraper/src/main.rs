@@ -5,7 +5,6 @@ use std::path::Path;
 use scraper::{Html, Selector};
 use url::{Url, Host, Position};
 
-
 fn create_file(bytes:Vec<u8>, link:String){
 
     let mut new_file_path = String::from("images");
@@ -36,7 +35,7 @@ fn download_image(link:String) -> Result<(),  ureq::Error> {
     Ok(())
 }
 
-fn get_links(link:String) -> Result<Vec<String>, ureq::Error> {
+fn get_links(link:String) -> Result<Vec<Vec<String>>, ureq::Error> {
 
     let mut links:Vec<String> = Vec::new();
     let parse = Url::parse(&link)?;
@@ -45,14 +44,14 @@ fn get_links(link:String) -> Result<Vec<String>, ureq::Error> {
 
     let html: String = ureq::get(&link).call()?.into_string()?;
     let document = Html::parse_document(&html);
-    let selector = Selector::parse("a").unwrap();
+    let mut selector = Selector::parse("a").unwrap();
 
+    // Get the links
     for element in document.select(&selector) {
 
         match element.value().attr("href") {
             Some(x) => {
                 let first_char = x.chars().next().unwrap();
-                let new_link = String::from("");
 
                 if first_char == "/".chars().next().unwrap() {
                     links.push(format!("{}{}", domain, x));
@@ -63,13 +62,30 @@ fn get_links(link:String) -> Result<Vec<String>, ureq::Error> {
             None => continue,
         }
     }
+    selector = Selector::parse("img").unwrap();
+    let mut img_links:Vec<String> = Vec::new();
+    // Get the images
+    for element in document.select(&selector) {
 
-    Ok((links))
+        match element.value().attr("src") {
+            Some(x) => {
+                let first_char = x.chars().next().unwrap();
+
+                if first_char == "/".chars().next().unwrap() {
+                    img_links.push(format!("{}:{}", parse.scheme(), x));
+                    continue;
+                }
+                img_links.push(x.to_string());
+            },
+            None => continue,
+        }
+    }
+
+    Ok((Vec::from([links, img_links])))
 }
 
 fn main()  {
     // download_image("https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/The_Felidae.jpg/245px-The_Felidae.jpg".to_string());
     let t = get_links("https://es.wikipedia.org/wiki/Felis_silvestris_catus".to_string());
-    println!("{:?}", t.unwrap());
-
+    println!("{:?}", t.unwrap()[0]);
 }
