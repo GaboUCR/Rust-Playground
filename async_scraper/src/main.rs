@@ -1,39 +1,10 @@
-use std::io::Read;
-use std::fs::File;
-use std::io::prelude::*;
-use std::path::Path;
 use scraper::{Html, Selector};
 use url::{Url, Host, Position};
+use std::{thread, time};
 
-fn create_file(bytes:Vec<u8>, link:String){
+mod downloads;
+use downloads::{create_file, download_image, Downloader, sleep};
 
-    let mut new_file_path = String::from("images");
-    let name = &link[link.rfind("/").unwrap()..link.len()].to_string();
-    new_file_path.push_str(name);
-
-    let path = Path::new(&new_file_path);
-    let display = path.display();
-
-    let mut file = match File::create(&path) {
-        Err(why) => panic!("couldn't create {}: {}", display, why),
-        Ok(file) => file,
-    };
-
-    match file.write_all(&bytes) {
-        Err(why) => panic!("couldn't write to {}: {}", display, why),
-        Ok(_) => println!("successfully wrote to {}", display),
-    };
-}
-
-fn download_image(link:String) -> Result<(),  ureq::Error> {
-    let resp = ureq::get(&link).call()?;
-
-    let mut bytes: Vec<u8> = Vec::with_capacity(5000000);
-    resp.into_reader().take(5_000_000).read_to_end(&mut bytes)?;
-
-    create_file(bytes, link);
-    Ok(())
-}
 
 fn get_links(link:String) -> Result<Vec<Vec<String>>, ureq::Error> {
 
@@ -57,7 +28,9 @@ fn get_links(link:String) -> Result<Vec<Vec<String>>, ureq::Error> {
                     links.push(format!("{}{}", domain, x));
                     continue;
                 }
-                links.push(x.to_string());
+                if x.contains("wikipedia") {
+                    links.push(x.to_string());
+                }
             },
             None => continue,
         }
@@ -85,7 +58,80 @@ fn get_links(link:String) -> Result<Vec<Vec<String>>, ureq::Error> {
 }
 
 fn main()  {
-    // download_image("https://upload.wikimedia.org/wikipedia/commons/thumb/5/5b/The_Felidae.jpg/245px-The_Felidae.jpg".to_string());
-    let t = get_links("https://es.wikipedia.org/wiki/Felis_silvestris_catus".to_string());
-    println!("{:?}", t.unwrap()[0]);
+
+    let downloader1 = Downloader::new();
+    let downloader2 = Downloader::new();
+
+    let tx1 = downloader1.tx.clone();
+    let tx2 = downloader2.tx.clone();
+
+    thread::spawn(move || downloader1.handle_images());
+    thread::spawn(move || downloader2.handle_images());
+
+    let mut links:Vec<String> = Vec::from(["https://es.wikipedia.org/wiki/Felis_silvestris_catus".to_string()]);
+    let mut img_links:Vec<String> = Vec::from([]);
+    let mut scraped:Vec<String> = Vec::from([]);
+
+    loop{
+        let link = links.remove(0);
+        let mut skip = false;
+
+        for e in &scraped {
+            if e == &link {
+                skip = true;
+                continue;
+            }
+        }
+
+        if skip {
+            continue;
+        }
+        println!("scraping {}", link);
+
+        let req = get_links(link.clone());
+        scraped.push(link);
+
+        for e in &req.as_ref().unwrap()[0] {
+            links.push(e.to_string());
+
+        }
+
+        for e in &req.unwrap()[1] {
+            img_links.push(e.to_string());
+        }
+
+        loop {
+            let l = img_links.remove(0);
+            let mut is_in = true;
+
+            for e in &scraped {
+                if e == &l {
+                    is_in = false;
+                    break;
+                }
+            }
+            if is_in {
+                tx1.send(l).unwrap();
+                break;
+            }
+
+        }
+        loop {
+            let l = img_links.remove(0);
+            let mut is_in = true;
+
+            for e in &scraped {
+                if e == &l {
+                    is_in = false;
+                    break;
+                }
+            }
+            if is_in {
+                tx2.send(l).unwrap();
+                break;
+            }
+
+        }
+        sleep(5);
+    }
 }
